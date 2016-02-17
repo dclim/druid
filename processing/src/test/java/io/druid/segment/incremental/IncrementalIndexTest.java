@@ -104,7 +104,7 @@ public class IncrementalIndexTest
                 @Override
                 public IncrementalIndex createIndex()
                 {
-                  return new OnheapIncrementalIndex(schema, false, true, sortFacts, 1000);
+                  return new OnheapIncrementalIndex(schema, false, true, sortFacts, true, 1000);
                 }
               }
           }

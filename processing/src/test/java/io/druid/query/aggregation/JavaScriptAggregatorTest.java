@@ -53,6 +53,12 @@ public class JavaScriptAggregatorTest
     }
 
     @Override
+    public DimensionSelector makeDictEncodedStringDimensionSelector(DimensionSpec dimensionSpec)
+    {
+      return null;
+    }
+
+    @Override
     public FloatColumnSelector makeFloatColumnSelector(String columnName)
     {
       return null;

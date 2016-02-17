@@ -68,6 +68,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import javax.annotation.Nullable;
+import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -77,9 +78,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-public class OverlordResourceTest
+public class OverlordTest
 {
   private static final TaskLocation TASK_LOCATION = new TaskLocation("dummy", 1000);
 
@@ -95,6 +95,7 @@ public class OverlordResourceTest
   private OverlordResource overlordResource;
   private CountDownLatch[] taskCompletionCountDownLatches;
   private CountDownLatch[] runTaskCountDownLatches;
+  private HttpServletRequest req;
   private SupervisorManager supervisorManager;
 
   private void setupServerAndCurator() throws Exception
@@ -120,7 +121,8 @@ public class OverlordResourceTest
   @Before
   public void setUp() throws Exception
   {
-    supervisorManager = EasyMock.createStrictMock(SupervisorManager.class);
+    req = EasyMock.createStrictMock(HttpServletRequest.class);
+    supervisorManager = EasyMock.createMock(SupervisorManager.class);
     taskLockbox = EasyMock.createStrictMock(TaskLockbox.class);
     taskLockbox.syncFromStorage();
     EasyMock.expectLastCall().atLeastOnce();
@@ -186,7 +188,7 @@ public class OverlordResourceTest
   }
 
   @Test(timeout = 2000L)
-  public void testOverlordResource() throws Exception
+  public void testOverlordRun() throws Exception
   {
     // basic task master lifecycle test
     taskMaster.start();
@@ -197,7 +199,13 @@ public class OverlordResourceTest
     }
     Assert.assertEquals(taskMaster.getLeader(), druidNode.getHostAndPort());
     // Test Overlord resource stuff
-    overlordResource = new OverlordResource(taskMaster, new TaskStorageQueryAdapter(taskStorage), null, null, null);
+    overlordResource = new OverlordResource(
+        taskMaster,
+        new TaskStorageQueryAdapter(taskStorage),
+        null,
+        null,
+        null
+    );
     Response response = overlordResource.getLeader();
     Assert.assertEquals(druidNode.getHostAndPort(), response.getEntity());
 
@@ -288,7 +296,6 @@ public class OverlordResourceTest
     private CountDownLatch[] runLatches;
     private ConcurrentHashMap<String, TaskRunnerWorkItem> taskRunnerWorkItems;
     private List<String> runningTasks;
-    private final AtomicBoolean started = new AtomicBoolean(false);
 
     public MockTaskRunner(CountDownLatch[] runLatches, CountDownLatch[] completionLatches)
     {
@@ -304,6 +311,7 @@ public class OverlordResourceTest
       return ImmutableList.of();
     }
 
+    @Override
     public void registerListener(TaskRunnerListener listener, Executor executor)
     {
       // Overlord doesn't call this method
@@ -315,6 +323,12 @@ public class OverlordResourceTest
     {
       // Overlord doesn't call this method
       throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void stop()
+    {
+      // Do nothing
     }
 
     @Override
@@ -336,9 +350,13 @@ public class OverlordResourceTest
               // Count down to let know that task is actually running
               // this is equivalent of getting process holder to run task in ForkingTaskRunner
               runningTasks.add(taskId);
-              runLatches[Integer.parseInt(taskId)].countDown();
+              if (runLatches != null) {
+                runLatches[Integer.parseInt(taskId)].countDown();
+              }
               // Wait for completion count down
-              completionLatches[Integer.parseInt(taskId)].await();
+              if (completionLatches != null) {
+                completionLatches[Integer.parseInt(taskId)].await();
+              }
               taskRunnerWorkItems.remove(taskId);
               runningTasks.remove(taskId);
               return TaskStatus.success(taskId);
@@ -363,7 +381,7 @@ public class OverlordResourceTest
     @Override
     public synchronized Collection<? extends TaskRunnerWorkItem> getRunningTasks()
     {
-      List runningTaskList = Lists.transform(
+      return Lists.transform(
           runningTasks,
           new Function<String, TaskRunnerWorkItem>()
           {
@@ -375,7 +393,6 @@ public class OverlordResourceTest
             }
           }
       );
-      return runningTaskList;
     }
 
     @Override
@@ -399,13 +416,7 @@ public class OverlordResourceTest
     @Override
     public void start()
     {
-      started.set(true);
-    }
-
-    @Override
-    public void stop()
-    {
-      started.set(false);
+      //Do nothing
     }
   }
 }

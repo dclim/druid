@@ -40,6 +40,9 @@ import io.druid.segment.DimensionSelector;
 import io.druid.segment.FloatColumnSelector;
 import io.druid.segment.LongColumnSelector;
 import io.druid.segment.ObjectColumnSelector;
+import io.druid.segment.column.ColumnCapabilities;
+import io.druid.segment.column.ColumnCapabilitiesImpl;
+import io.druid.segment.column.ValueType;
 import io.druid.segment.data.ArrayBasedIndexedInts;
 import io.druid.segment.data.IndexedInts;
 import org.junit.Assert;
@@ -134,11 +137,39 @@ public class FilteredAggregatorTest
                       throw new IllegalArgumentException();
                   }
                 }
+
+                @Override
+                public ColumnCapabilities getDimCapabilities()
+                {
+                  ColumnCapabilitiesImpl capabilities = new ColumnCapabilitiesImpl();
+                  if (dimensionName.equals("dim_float")) {
+                    capabilities.setHasBitmapIndexes(false);
+                    capabilities.setDictionaryEncoded(false);
+                    capabilities.setType(ValueType.FLOAT);
+                  }
+                  if (dimensionName.equals("dim_long")) {
+                    capabilities.setHasBitmapIndexes(false);
+                    capabilities.setDictionaryEncoded(false);
+                    capabilities.setType(ValueType.LONG);
+                  }
+                  if (dimensionName.equals("dim")) {
+                    capabilities.setHasBitmapIndexes(true);
+                    capabilities.setDictionaryEncoded(true);
+                    capabilities.setType(ValueType.STRING);
+                  }
+                  return capabilities;
+                }
               }
           );
         } else {
           throw new UnsupportedOperationException();
         }
+      }
+
+      @Override
+      public DimensionSelector makeDictEncodedStringDimensionSelector(DimensionSpec dimensionSpec)
+      {
+        return makeDimensionSelector(dimensionSpec);
       }
 
       @Override

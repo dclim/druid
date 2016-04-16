@@ -27,6 +27,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.metamx.collections.bitmap.BitmapFactory;
 import com.metamx.collections.bitmap.ImmutableBitmap;
+import com.metamx.common.IAE;
 import com.metamx.common.ISE;
 import com.metamx.common.guava.Accumulator;
 import com.metamx.common.guava.FunctionalIterable;
@@ -47,13 +48,16 @@ import io.druid.query.search.search.SearchQuery;
 import io.druid.query.search.search.SearchQuerySpec;
 import io.druid.segment.ColumnSelectorBitmapIndexSelector;
 import io.druid.segment.Cursor;
+import io.druid.segment.DimensionColumnReader;
 import io.druid.segment.DimensionSelector;
 import io.druid.segment.QueryableIndex;
 import io.druid.segment.Segment;
 import io.druid.segment.StorageAdapter;
 import io.druid.segment.column.BitmapIndex;
 import io.druid.segment.column.Column;
+import io.druid.segment.data.IndexedFloats;
 import io.druid.segment.data.IndexedInts;
+import io.druid.segment.data.IndexedLongs;
 import io.druid.segment.filter.Filters;
 import org.apache.commons.lang.mutable.MutableInt;
 
@@ -104,47 +108,63 @@ public class SearchQueryRunner implements QueryRunner<Result<SearchResultValue>>
         dimsToSearch = dimensions;
       }
 
-      final BitmapFactory bitmapFactory = index.getBitmapFactoryForDimensions();
-
-      final ImmutableBitmap baseFilter =
-          filter == null ? null : filter.getBitmapIndex(new ColumnSelectorBitmapIndexSelector(bitmapFactory, index));
-
+      boolean useStorageAdapter = false;
       for (DimensionSpec dimension : dimsToSearch) {
         final Column column = index.getColumn(dimension.getDimension());
         if (column == null) {
           continue;
         }
-
-        final BitmapIndex bitmapIndex = column.getBitmapIndex();
-        ExtractionFn extractionFn = dimension.getExtractionFn();
-        if (extractionFn == null) {
-          extractionFn = IdentityExtractionFn.getInstance();
+        if (!column.getCapabilities().hasBitmapIndexes()) {
+          // If one of the columns lacks bitmap indexes, fallback to using StorageAdapter and do a per-row scan.
+          // Could optimize this by using bitmaps when available, full scan otherwise
+          useStorageAdapter = true;
+          break;
         }
-        if (bitmapIndex != null) {
-          for (int i = 0; i < bitmapIndex.getCardinality(); ++i) {
-            String dimVal = Strings.nullToEmpty(extractionFn.apply(bitmapIndex.getValue(i)));
-            if (!searchQuerySpec.accept(dimVal)) {
-              continue;
-            }
-            ImmutableBitmap bitmap = bitmapIndex.getBitmap(i);
-            if (baseFilter != null) {
-              bitmap = bitmapFactory.intersection(Arrays.asList(baseFilter, bitmap));
-            }
-            if (bitmap.size() > 0) {
-              MutableInt counter = new MutableInt(bitmap.size());
-              MutableInt prev = retVal.put(new SearchHit(dimension.getOutputName(), dimVal), counter);
-              if (prev != null) {
-                counter.add(prev.intValue());
+      }
+
+      if (!useStorageAdapter) {
+        final BitmapFactory bitmapFactory = index.getBitmapFactoryForDimensions();
+        final Map<String, DimensionColumnReader> readers = index.getDimensionReaders();
+        final ImmutableBitmap baseFilter =
+            filter == null
+            ? null
+            : filter.getBitmapIndex(new ColumnSelectorBitmapIndexSelector(bitmapFactory, index, readers));
+
+        for (DimensionSpec dimension : dimsToSearch) {
+          final Column column = index.getColumn(dimension.getDimension());
+          if (column == null) {
+            continue;
+          }
+          final BitmapIndex bitmapIndex = column.getBitmapIndex();
+          ExtractionFn extractionFn = dimension.getExtractionFn();
+          if (extractionFn == null) {
+            extractionFn = IdentityExtractionFn.getInstance();
+          }
+          if (bitmapIndex != null) {
+            for (int i = 0; i < bitmapIndex.getCardinality(); ++i) {
+              String dimVal = Strings.nullToEmpty(extractionFn.apply(bitmapIndex.getValue(i)));
+              if (!searchQuerySpec.accept(dimVal)) {
+                continue;
               }
-              if (retVal.size() >= limit) {
-                return makeReturnResult(limit, retVal);
+              ImmutableBitmap bitmap = bitmapIndex.getBitmap(i);
+              if (baseFilter != null) {
+                bitmap = bitmapFactory.intersection(Arrays.asList(baseFilter, bitmap));
+              }
+              if (bitmap.size() > 0) {
+                MutableInt counter = new MutableInt(bitmap.size());
+                MutableInt prev = retVal.put(new SearchHit(dimension.getOutputName(), dimVal), counter);
+                if (prev != null) {
+                  counter.add(prev.intValue());
+                }
+                if (retVal.size() >= limit) {
+                  return makeReturnResult(limit, retVal);
+                }
               }
             }
           }
         }
+        return makeReturnResult(limit, retVal);
       }
-
-      return makeReturnResult(limit, retVal);
     }
 
     final StorageAdapter adapter = segment.asStorageAdapter();
@@ -189,21 +209,26 @@ public class SearchQueryRunner implements QueryRunner<Result<SearchResultValue>>
             while (!cursor.isDone()) {
               for (Map.Entry<String, DimensionSelector> entry : dimSelectors.entrySet()) {
                 final DimensionSelector selector = entry.getValue();
-
                 if (selector != null) {
-                  final IndexedInts vals = selector.getRow();
-                  for (int i = 0; i < vals.size(); ++i) {
-                    final String dimVal = selector.lookupName(vals.get(i));
-                    if (searchQuerySpec.accept(dimVal)) {
-                      MutableInt counter = new MutableInt(1);
-                      MutableInt prev = set.put(new SearchHit(entry.getKey(), dimVal), counter);
-                      if (prev != null) {
-                        counter.add(prev.intValue());
+                  switch(selector.getDimCapabilities().getType()) {
+                    case STRING:
+                      final IndexedInts vals = selector.getRow();
+                      for (int i = 0; i < vals.size(); ++i) {
+                        final String dimVal = selector.lookupName(vals.get(i));
+                        if (searchQuerySpec.accept(dimVal)) {
+                          MutableInt counter = new MutableInt(1);
+                          MutableInt prev = set.put(new SearchHit(entry.getKey(), dimVal), counter);
+                          if (prev != null) {
+                            counter.add(prev.intValue());
+                          }
+                          if (set.size() >= limit) {
+                            return set;
+                          }
+                        }
                       }
-                      if (set.size() >= limit) {
-                        return set;
-                      }
-                    }
+                      break;
+                    default:
+                      throw new IAE("Invalid type: " + selector.getDimCapabilities().getType());
                   }
                 }
               }

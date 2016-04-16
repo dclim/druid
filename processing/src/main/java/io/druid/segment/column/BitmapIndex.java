@@ -44,4 +44,6 @@ public interface BitmapIndex
   public int getIndex(String value);
 
   public ImmutableBitmap getBitmap(int idx);
+
+  public ImmutableBitmap getBitmapFromValue(String value);
 }

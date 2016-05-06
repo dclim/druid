@@ -37,11 +37,14 @@ public class ConciseComplementBenchmark
 {
 
   // Number of rows to read, the test will read random rows
-  @Param({"1000", "10000", "100000", "1000000", "1000000"})
+// TODO: For testing
+//  @Param({"1000", "10000", "100000", "1000000", "10000000"})
+  @Param({"1000", "10000"})
   int emptyRows;
 
   @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
+  // TODO: For testing
+  @BenchmarkMode({Mode.AverageTime, Mode.Throughput})
   @OutputTimeUnit(TimeUnit.MICROSECONDS)
   public void uncompressed(Blackhole blackhole)
   {

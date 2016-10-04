@@ -373,7 +373,7 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
             pollRetryLock.lockInterruptibly();
             try {
               long nanos = TimeUnit.MILLISECONDS.toNanos(POLL_RETRY_MS);
-              while (nanos > 0L && !pauseRequested) {
+              while (nanos > 0L && !pauseRequested && !stopRequested) {
                 nanos = isAwaitingRetry.awaitNanos(nanos);
               }
             }
@@ -554,9 +554,38 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
   {
     log.info("Stopping gracefully.");
     stopRequested = true;
-    if (runThread.isAlive()) {
-      log.info("Interrupting run thread (status: [%s])", status);
-      runThread.interrupt();
+
+    try {
+      if (pauseLock.tryLock(15, TimeUnit.SECONDS)) {
+        try {
+          if (pauseRequested) {
+            pauseRequested = false;
+            shouldResume.signalAll();
+          }
+        }
+        finally {
+          pauseLock.unlock();
+        }
+      } else {
+        log.warn("While stopping: failed to acquire pauseLock before timeout, interrupting run thread");
+        runThread.interrupt();
+        return;
+      }
+
+      if (pollRetryLock.tryLock(15, TimeUnit.SECONDS)) {
+        try {
+          isAwaitingRetry.signalAll();
+        }
+        finally {
+          pollRetryLock.unlock();
+        }
+      } else {
+        log.warn("While stopping: failed to acquire pollRetryLock before timeout, interrupting run thread");
+        runThread.interrupt();
+      }
+    }
+    catch (Exception e) {
+      Throwables.propagate(e);
     }
   }
 
@@ -883,14 +912,14 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
    * Checks if the pauseRequested flag was set and if so blocks:
    * a) if pauseMillis == PAUSE_FOREVER, until pauseRequested is cleared
    * b) if pauseMillis != PAUSE_FOREVER, until pauseMillis elapses -or- pauseRequested is cleared
-   * <p>
+   * <p/>
    * If pauseMillis is changed while paused, the new pause timeout will be applied. This allows adjustment of the
    * pause timeout (making a timed pause into an indefinite pause and vice versa is valid) without having to resume
    * and ensures that the loop continues to stay paused without ingesting any new events. You will need to signal
    * shouldResume after adjusting pauseMillis for the new value to take effect.
-   * <p>
+   * <p/>
    * Sets paused = true and signals paused so callers can be notified when the pause command has been accepted.
-   * <p>
+   * <p/>
    * Additionally, pauses if all partitions assignments have been read and pauseAfterRead flag is set.
    *
    * @return true if a pause request was handled, false otherwise

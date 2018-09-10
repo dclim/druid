@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.apache.druid.indexing.kafka.supervisor;
+package org.apache.druid.indexing.seekablestream.supervisor;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -26,29 +26,24 @@ import org.joda.time.DateTime;
 import javax.annotation.Nullable;
 import java.util.Map;
 
-public class TaskReportData
+public class TaskReportData<T1, T2>
 {
-  public enum TaskType
-  {
-    ACTIVE, PUBLISHING, UNKNOWN
-  }
-
   private final String id;
-  private final Map<Integer, Long> startingOffsets;
+  private final Map<T1, T2> startingOffsets;
   private final DateTime startTime;
   private final Long remainingSeconds;
   private final TaskType type;
-  private final Map<Integer, Long> currentOffsets;
-  private final Map<Integer, Long> lag;
+  private Map<T1, T2> currentOffsets;
+  private final Map<T1, T2> lag;
 
   public TaskReportData(
       String id,
-      @Nullable Map<Integer, Long> startingOffsets,
-      @Nullable Map<Integer, Long> currentOffsets,
+      @Nullable Map<T1, T2> startingOffsets,
+      @Nullable Map<T1, T2> currentOffsets,
       @Nullable DateTime startTime,
       Long remainingSeconds,
       TaskType type,
-      @Nullable Map<Integer, Long> lag
+      @Nullable Map<T1, T2> lag
   )
   {
     this.id = id;
@@ -68,14 +63,14 @@ public class TaskReportData
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getStartingOffsets()
+  public Map<T1, T2> getStartingOffsets()
   {
     return startingOffsets;
   }
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getCurrentOffsets()
+  public Map<T1, T2> getCurrentOffsets()
   {
     return currentOffsets;
   }
@@ -100,9 +95,14 @@ public class TaskReportData
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getLag()
+  public Map<T1, T2> getLag()
   {
     return lag;
+  }
+
+  public void setCurrentSequenceNumbers(Map<T1, T2> currentOffsets)
+  {
+    this.currentOffsets = currentOffsets;
   }
 
   @Override
@@ -116,5 +116,10 @@ public class TaskReportData
            ", remainingSeconds=" + remainingSeconds +
            (lag != null ? ", lag=" + lag : "") +
            '}';
+  }
+
+  public enum TaskType
+  {
+    ACTIVE, PUBLISHING, UNKNOWN
   }
 }

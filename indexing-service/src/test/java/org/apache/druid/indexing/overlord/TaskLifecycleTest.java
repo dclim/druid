@@ -537,7 +537,8 @@ public class TaskLifecycleTest
             mdc,
             emitter,
             EasyMock.createMock(SupervisorManager.class),
-            new Counters()
+            new Counters(),
+            null
         )
     );
     File tmpDir = temporaryFolder.newFolder();

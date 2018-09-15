@@ -1585,6 +1585,30 @@ public class IndexTask extends AbstractTask implements ChatHandler
       return segmentWriteOutMediumFactory;
     }
 
+    public static IndexTuningConfig copyOf(IndexTuningConfig config)
+    {
+      return new IndexTuningConfig(
+          config.targetPartitionSize,
+          config.maxRowsInMemory,
+          config.maxBytesInMemory,
+          config.maxTotalRows,
+          null,
+          config.numShards,
+          config.indexSpec,
+          config.maxPendingPersists,
+          true,
+          config.forceExtendableShardSpecs,
+          config.forceGuaranteedRollup,
+          config.reportParseExceptions,
+          null,
+          config.pushTimeout,
+          config.segmentWriteOutMediumFactory,
+          config.logParseExceptions,
+          config.maxParseExceptions,
+          config.maxSavedParseExceptions
+      );
+    }
+
     @Override
     public boolean equals(Object o)
     {

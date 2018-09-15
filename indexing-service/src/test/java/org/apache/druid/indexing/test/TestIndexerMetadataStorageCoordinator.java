@@ -26,6 +26,8 @@ import com.google.common.collect.Sets;
 import org.apache.druid.indexing.overlord.DataSourceMetadata;
 import org.apache.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
 import org.apache.druid.indexing.overlord.SegmentPublishResult;
+import org.apache.druid.indexing.overlord.s3.SupervisedObject;
+import org.apache.druid.indexing.overlord.s3.SupervisedObjectInterval;
 import org.apache.druid.java.util.common.Pair;
 import org.apache.druid.segment.realtime.appenderator.SegmentIdentifier;
 import org.apache.druid.timeline.DataSegment;
@@ -97,6 +99,38 @@ public class TestIndexerMetadataStorageCoordinator implements IndexerMetadataSto
     synchronized (unusedSegments) {
       return ImmutableList.copyOf(unusedSegments);
     }
+  }
+
+  @Override
+  public SupervisedObject insertSupervisedObject(SupervisedObject supervisedObject)
+  {
+    return null;
+  }
+
+  @Override
+  public List<SupervisedObject> getSupervisedObjects(String dataSource)
+  {
+    return null;
+  }
+
+  @Override
+  public SupervisedObjectInterval insertSupervisedObjectInterval(SupervisedObjectInterval supervisedObjectInterval)
+  {
+    return null;
+  }
+
+  @Override
+  public List<SupervisedObjectInterval> getSupervisedObjectIntervalsWithInterval(
+      String dataSource, Interval interval
+  )
+  {
+    return null;
+  }
+
+  @Override
+  public List<SupervisedObjectInterval> getSupervisedObjectIntervalsForPath(String dataSource, String path)
+  {
+    return null;
   }
 
   @Override

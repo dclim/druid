@@ -92,7 +92,8 @@ public abstract class IngestionTestBase
         storageCoordinator,
         new NoopServiceEmitter(),
         null,
-        new Counters()
+        new Counters(),
+        null
     );
   }
 

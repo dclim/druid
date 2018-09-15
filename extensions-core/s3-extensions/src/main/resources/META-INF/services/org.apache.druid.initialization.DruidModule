@@ -1,2 +1,3 @@
 org.apache.druid.storage.s3.S3StorageDruidModule
 org.apache.druid.firehose.s3.S3FirehoseDruidModule
+org.apache.druid.indexing.s3.S3IndexingServiceDruidModule

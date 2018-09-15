@@ -222,7 +222,8 @@ public class IngestSegmentFirehoseFactoryTest
             mdc,
             newMockEmitter(),
             EasyMock.createMock(SupervisorManager.class),
-            new Counters()
+            new Counters(),
+            null
         )
     );
     SegmentHandoffNotifierFactory notifierFactory = EasyMock.createNiceMock(SegmentHandoffNotifierFactory.class);

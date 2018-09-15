@@ -36,6 +36,8 @@ import com.google.inject.Inject;
 import org.apache.druid.indexing.overlord.DataSourceMetadata;
 import org.apache.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
 import org.apache.druid.indexing.overlord.SegmentPublishResult;
+import org.apache.druid.indexing.overlord.s3.SupervisedObject;
+import org.apache.druid.indexing.overlord.s3.SupervisedObjectInterval;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.IAE;
 import org.apache.druid.java.util.common.ISE;
@@ -52,6 +54,7 @@ import org.apache.druid.timeline.partition.LinearShardSpec;
 import org.apache.druid.timeline.partition.NoneShardSpec;
 import org.apache.druid.timeline.partition.NumberedShardSpec;
 import org.apache.druid.timeline.partition.PartitionChunk;
+import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.skife.jdbi.v2.FoldController;
 import org.skife.jdbi.v2.Folder3;
@@ -113,6 +116,9 @@ public class IndexerSQLMetadataStorageCoordinator implements IndexerMetadataStor
     connector.createDataSourceTable();
     connector.createPendingSegmentsTable();
     connector.createSegmentTable();
+
+    connector.createS3SupervisedObjectsTable();
+    connector.createS3SupervisedObjectIntervalsTable();
   }
 
   @Override
@@ -286,6 +292,18 @@ public class IndexerSQLMetadataStorageCoordinator implements IndexerMetadataStor
       final DataSourceMetadata endMetadata
   ) throws IOException
   {
+    return announceHistoricalSegments(segments, startMetadata, endMetadata, null, null);
+  }
+
+  @Override
+  public SegmentPublishResult announceHistoricalSegments(
+      final Set<DataSegment> segments,
+      final DataSourceMetadata startMetadata,
+      final DataSourceMetadata endMetadata,
+      final List<SupervisedObject> supervisedObjects,
+      final List<SupervisedObjectInterval> supervisedObjectIntervals
+  ) throws IOException
+  {
     if (segments.isEmpty()) {
       throw new IllegalArgumentException("segment set must not be empty");
     }
@@ -346,6 +364,20 @@ public class IndexerSQLMetadataStorageCoordinator implements IndexerMetadataStor
                   } else if (result == DataSourceMetadataUpdateResult.TRY_AGAIN) {
                     throw new RetryTransactionException("Aborting transaction!");
                   }
+                }
+              }
+
+              // Write supervised object metadata
+              if (supervisedObjects != null) {
+                for (SupervisedObject supervisedObject : supervisedObjects) {
+                  insertSupervisedObjectWithHandle(handle, supervisedObject);
+                }
+              }
+
+              // Write supervised object intervals metadata
+              if (supervisedObjectIntervals != null) {
+                for (SupervisedObjectInterval supervisedObjectInterval : supervisedObjectIntervals) {
+                  insertSupervisedObjectIntervalWithHandle(handle, supervisedObjectInterval);
                 }
               }
 
@@ -1219,6 +1251,315 @@ public class IndexerSQLMetadataStorageCoordinator implements IndexerMetadataStor
             .bind("commit_metadata_sha1", BaseEncoding.base16().encode(
                 Hashing.sha1().hashBytes(jsonMapper.writeValueAsBytes(metadata)).asBytes()))
             .execute()
+    );
+  }
+
+  private SupervisedObject getSupervisedObjectOrNull(String key)
+  {
+    return connector.retryWithHandle((handle) -> getSupervisedObjectOrNullWithHandle(handle, key));
+  }
+
+  private SupervisedObject getSupervisedObjectOrNullWithHandle(Handle handle, String key)
+  {
+    return handle.createQuery(
+        StringUtils.format(
+            "SELECT payload FROM %1$s WHERE dataSource_path = :dataSourcePath",
+            dbTables.getS3SupervisedObjectsTable()
+        )
+    )
+                 .bind("dataSourcePath", key)
+                 .map(
+                     (index, r, ctx) -> {
+                       try {
+                         SupervisedObject payload = jsonMapper.readValue(r.getBytes("payload"), SupervisedObject.class);
+                         return payload;
+                       }
+                       catch (IOException e) {
+                         throw new RuntimeException(e);
+                       }
+                     }
+                 ).first();
+  }
+
+  @Override
+  public SupervisedObject insertSupervisedObject(SupervisedObject supervisedObject)
+  {
+    return connector.retryWithHandle((handle) -> insertSupervisedObjectWithHandle(handle, supervisedObject));
+  }
+
+  private SupervisedObject insertSupervisedObjectWithHandle(Handle handle, SupervisedObject supervisedObject)
+  {
+    Preconditions.checkNotNull(supervisedObject);
+    Preconditions.checkNotNull(supervisedObject.getDataSource());
+    Preconditions.checkNotNull(supervisedObject.getPath());
+
+
+    return handle.isInTransaction() ? insertSupervisedObjectWithTransactionHandle(handle, supervisedObject)
+                                    : handle.inTransaction(
+                                        (myHandle, transactionStatus) -> insertSupervisedObjectWithTransactionHandle(
+                                            handle,
+                                            supervisedObject
+                                        ));
+  }
+
+  private SupervisedObject insertSupervisedObjectWithTransactionHandle(Handle handle, SupervisedObject supervisedObject)
+  {
+    String key = String.format("%s_%s", supervisedObject.getDataSource(), supervisedObject.getPath());
+
+    // TODO: Kind of a hack - if the hash field is null, treat that as a request to delete.
+    if (supervisedObject.getHash() == null) {
+      deleteSupervisedObjectWithTransactionHandle(handle, key);
+      return supervisedObject;
+    }
+
+    String statement = String.format(
+        getSupervisedObjectOrNullWithHandle(handle, key) == null
+        ? "INSERT INTO %1$s (dataSource_path, payload) VALUES (:keyName, :payload)"
+        : "UPDATE %1$s SET payload=:payload WHERE dataSource_path=:keyName",
+        dbTables.getS3SupervisedObjectsTable()
+    );
+
+    try {
+      handle.createStatement(statement)
+            .bind("keyName", key)
+            .bind("payload", jsonMapper.writeValueAsBytes(supervisedObject))
+            .execute();
+    }
+    catch (JsonProcessingException e) {
+      Throwables.propagate(e);
+    }
+
+    return supervisedObject;
+  }
+
+  private void deleteSupervisedObjectWithTransactionHandle(Handle handle, String key)
+  {
+    if (getSupervisedObjectOrNullWithHandle(handle, key) == null) {
+      return;
+    }
+
+    handle.createStatement(
+        String.format(
+            "DELETE FROM %1$s WHERE dataSource_path=:key", dbTables.getS3SupervisedObjectsTable())
+    )
+          .bind("key", key)
+          .execute();
+  }
+
+  @Override
+  public List<SupervisedObject> getSupervisedObjects(String dataSource)
+  {
+    return connector.retryWithHandle(
+        (handle) ->
+        {
+          String query = String.format(
+              "SELECT payload FROM %1$s WHERE dataSource_path LIKE '%2$s_%%'",
+              dbTables.getS3SupervisedObjectsTable(), dataSource
+          );
+
+          return handle.createQuery(query)
+                       .map(
+                           (index, r, ctx) -> {
+                             try {
+                               SupervisedObject payload = jsonMapper.readValue(
+                                   r.getBytes("payload"),
+                                   SupervisedObject.class
+                               );
+                               return payload;
+                             }
+                             catch (IOException e) {
+                               throw new RuntimeException(e);
+                             }
+                           }
+                       ).list();
+        }
+    );
+  }
+
+
+  private SupervisedObjectInterval getSupervisedObjectIntervalOrNull(String key)
+  {
+    return connector.retryWithHandle((handle) -> getSupervisedObjectIntervalOrNullWithHandle(handle, key));
+  }
+
+  private SupervisedObjectInterval getSupervisedObjectIntervalOrNullWithHandle(Handle handle, String key)
+  {
+    return handle.createQuery(
+        StringUtils.format(
+            "SELECT dataSource, path, interval_start, interval_end, hash FROM %1$s WHERE dataSource_path_start_end = :dataSourcePathStartEnd",
+            dbTables.getS3SupervisedObjectIntervalsTable()
+        )
+    )
+                 .bind("dataSourcePathStartEnd", key)
+                 .map(
+                     (index, r, ctx) -> {
+                       SupervisedObjectInterval supervisedObjectInterval = new SupervisedObjectInterval(
+                           r.getString("dataSource"),
+                           r.getString("path"),
+                           new Interval(
+                               new DateTime(Long.parseLong(r.getString("interval_start"))),
+                               new DateTime(Long.parseLong(r.getString("interval_end")))
+                           ),
+                           r.getString("hash")
+                       );
+
+                       return supervisedObjectInterval;
+                     }
+                 ).first();
+  }
+
+  @Override
+  public SupervisedObjectInterval insertSupervisedObjectInterval(SupervisedObjectInterval supervisedObjectInterval)
+  {
+    return connector.retryWithHandle((handle) -> insertSupervisedObjectIntervalWithHandle(
+        handle,
+        supervisedObjectInterval
+    ));
+  }
+
+  private SupervisedObjectInterval insertSupervisedObjectIntervalWithHandle(
+      Handle handle,
+      SupervisedObjectInterval supervisedObjectInterval
+  )
+  {
+    Preconditions.checkNotNull(supervisedObjectInterval);
+    Preconditions.checkNotNull(supervisedObjectInterval.getDataSource());
+    Preconditions.checkNotNull(supervisedObjectInterval.getPath());
+    Preconditions.checkNotNull(supervisedObjectInterval.getInterval());
+
+    return handle.isInTransaction() ? insertSupervisedObjectIntervalWithTransactionHandle(
+        handle,
+        supervisedObjectInterval
+    )
+                                    : handle.inTransaction(
+                                        (myHandle, transactionStatus) -> insertSupervisedObjectIntervalWithTransactionHandle(
+                                            handle,
+                                            supervisedObjectInterval
+                                        ));
+  }
+
+  private SupervisedObjectInterval insertSupervisedObjectIntervalWithTransactionHandle(
+      Handle handle,
+      SupervisedObjectInterval supervisedObjectInterval
+  )
+  {
+    String key = String.format(
+        "%s_%s_%s_%s",
+        supervisedObjectInterval.getDataSource(),
+        supervisedObjectInterval.getPath(),
+        supervisedObjectInterval.getInterval().getStart().getMillis(),
+        supervisedObjectInterval.getInterval().getEnd().getMillis()
+    );
+
+    // TODO: Kind of a hack - if the hash field is null, treat that as a request to delete.
+    if (supervisedObjectInterval.getHash() == null) {
+      deleteSupervisedObjectIntervalWithTransactionHandle(handle, key);
+      return supervisedObjectInterval;
+    }
+
+    String statement = String.format(
+        getSupervisedObjectIntervalOrNullWithHandle(handle, key) == null
+        ? "INSERT INTO %1$s (dataSource_path_start_end, dataSource, path, interval_start, interval_end, hash) VALUES (:keyName, :dataSource, :path, :intervalStart, :intervalEnd, :hash)"
+        : "UPDATE %1$s SET dataSource=:dataSource, path=:path, interval_start=:intervalStart, interval_end=:intervalEnd, hash=:hash WHERE dataSource_path_start_end=:keyName",
+        dbTables.getS3SupervisedObjectIntervalsTable()
+    );
+
+
+    handle.createStatement(statement)
+          .bind("keyName", key)
+          .bind("dataSource", supervisedObjectInterval.getDataSource())
+          .bind("path", supervisedObjectInterval.getPath())
+          .bind("intervalStart", Long.toString(supervisedObjectInterval.getInterval().getStart().getMillis()))
+          .bind("intervalEnd", Long.toString(supervisedObjectInterval.getInterval().getEnd().getMillis()))
+          .bind("hash", supervisedObjectInterval.getHash())
+          .execute();
+
+    return supervisedObjectInterval;
+  }
+
+  private void deleteSupervisedObjectIntervalWithTransactionHandle(Handle handle, String key)
+  {
+    if (getSupervisedObjectIntervalOrNullWithHandle(handle, key) == null) {
+      return;
+    }
+
+    handle.createStatement(
+        String.format(
+            "DELETE FROM %1$s WHERE dataSource_path_start_end=:key", dbTables.getS3SupervisedObjectIntervalsTable())
+    )
+          .bind("key", key)
+          .execute();
+  }
+
+  @Override
+  public List<SupervisedObjectInterval> getSupervisedObjectIntervalsWithInterval(String dataSource, Interval interval)
+  {
+    return connector.retryWithHandle(
+        (handle) ->
+        {
+          String query = String.format(
+              "SELECT dataSource, path, interval_start, interval_end, hash FROM %1$s"
+              + " WHERE dataSource = :dataSource AND interval_start = :intervalStart AND interval_end = :intervalEnd",
+              dbTables.getS3SupervisedObjectIntervalsTable()
+          );
+
+          return handle.createQuery(query)
+                       .bind("dataSource", dataSource)
+                       .bind("intervalStart", Long.toString(interval.getStart().getMillis()))
+                       .bind("intervalEnd", Long.toString(interval.getEnd().getMillis()))
+                       .map(
+                           (index, r, ctx) -> {
+
+
+                             SupervisedObjectInterval supervisedObjectInterval = new SupervisedObjectInterval(
+                                 r.getString("dataSource"),
+                                 r.getString("path"),
+                                 new Interval(
+                                     new DateTime(Long.parseLong(r.getString("interval_start"))),
+                                     new DateTime(Long.parseLong(r.getString("interval_end")))
+                                 ),
+                                 r.getString("hash")
+                             );
+
+                             return supervisedObjectInterval;
+
+                           }
+                       ).list();
+        }
+    );
+  }
+
+  @Override
+  public List<SupervisedObjectInterval> getSupervisedObjectIntervalsForPath(String dataSource, String path)
+  {
+    return connector.retryWithHandle(
+        (handle) ->
+        {
+          String query = String.format(
+              "SELECT dataSource, path, interval_start, interval_end, hash FROM %1$s"
+              + " WHERE dataSource = :dataSource AND path = :path",
+              dbTables.getS3SupervisedObjectIntervalsTable()
+          );
+
+          return handle.createQuery(query)
+                       .bind("dataSource", dataSource)
+                       .bind("path", path)
+                       .map(
+                           (index, r, ctx) -> {
+                             SupervisedObjectInterval supervisedObjectInterval = new SupervisedObjectInterval(
+                                 r.getString("dataSource"),
+                                 r.getString("path"),
+                                 new Interval(
+                                     new DateTime(Long.parseLong(r.getString("interval_start"))),
+                                     new DateTime(Long.parseLong(r.getString("interval_end")))
+                                 ),
+                                 r.getString("hash")
+                             );
+
+                             return supervisedObjectInterval;
+                           }
+                       ).list();
+        }
     );
   }
 }

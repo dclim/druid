@@ -19,6 +19,7 @@
 
 package org.apache.druid.indexing.common.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Inject;
 import org.apache.druid.indexing.common.Counters;
 import org.apache.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
@@ -35,6 +36,7 @@ public class TaskActionToolbox
   private final ServiceEmitter emitter;
   private final SupervisorManager supervisorManager;
   private final Counters counters;
+  private final ObjectMapper objectMapper;
 
   @Inject
   public TaskActionToolbox(
@@ -43,7 +45,8 @@ public class TaskActionToolbox
       IndexerMetadataStorageCoordinator indexerMetadataStorageCoordinator,
       ServiceEmitter emitter,
       SupervisorManager supervisorManager,
-      Counters counters
+      Counters counters,
+      ObjectMapper objectMapper
   )
   {
     this.taskLockbox = taskLockbox;
@@ -52,6 +55,7 @@ public class TaskActionToolbox
     this.emitter = emitter;
     this.supervisorManager = supervisorManager;
     this.counters = counters;
+    this.objectMapper = objectMapper;
   }
 
   public TaskLockbox getTaskLockbox()
@@ -82,5 +86,10 @@ public class TaskActionToolbox
   public Counters getCounters()
   {
     return counters;
+  }
+
+  public ObjectMapper getObjectMapper()
+  {
+    return objectMapper;
   }
 }

@@ -19,6 +19,8 @@
 
 package org.apache.druid.indexing.overlord;
 
+import org.apache.druid.indexing.overlord.s3.SupervisedObject;
+import org.apache.druid.indexing.overlord.s3.SupervisedObjectInterval;
 import org.apache.druid.java.util.common.Pair;
 import org.apache.druid.segment.realtime.appenderator.SegmentIdentifier;
 import org.apache.druid.timeline.DataSegment;
@@ -148,6 +150,19 @@ public interface IndexerMetadataStorageCoordinator
       DataSourceMetadata endMetadata
   ) throws IOException;
 
+
+  default SegmentPublishResult announceHistoricalSegments(
+      Set<DataSegment> segments,
+      DataSourceMetadata startMetadata,
+      DataSourceMetadata endMetadata,
+      List<SupervisedObject> supervisedObjects,
+      List<SupervisedObjectInterval> supervisedObjectIntervals
+  ) throws IOException
+  {
+    // TODO: Hack to save implementing everywhere
+    return announceHistoricalSegments(segments, startMetadata, endMetadata);
+  }
+
   /**
    * Read dataSource metadata. Returns null if there is no metadata.
    */
@@ -195,4 +210,11 @@ public interface IndexerMetadataStorageCoordinator
    * @return DataSegments which include ONLY data within the requested interval and are not flagged as used. Data segments NOT returned here may include data in the interval
    */
   List<DataSegment> getUnusedSegmentsForInterval(String dataSource, Interval interval);
+
+  SupervisedObject insertSupervisedObject(SupervisedObject supervisedObject);
+  List<SupervisedObject> getSupervisedObjects(String dataSource);
+
+  SupervisedObjectInterval insertSupervisedObjectInterval(SupervisedObjectInterval supervisedObjectInterval);
+  List<SupervisedObjectInterval> getSupervisedObjectIntervalsWithInterval(String dataSource, Interval interval);
+  List<SupervisedObjectInterval> getSupervisedObjectIntervalsForPath(String dataSource, String path);
 }

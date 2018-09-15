@@ -725,4 +725,62 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
       log.warn(e, "Exception while deleting records from table");
     }
   }
+
+  @Override
+  public void createS3SupervisedObjectsTable()
+  {
+    if (config.get().isCreateTables()) {
+      createS3SupervisedObjectsTable(tablesConfigSupplier.get().getS3SupervisedObjectsTable());
+    }
+  }
+
+  private void createS3SupervisedObjectsTable(final String tableName)
+  {
+    createTable(
+        tableName,
+        ImmutableList.of(
+            StringUtils.format(
+                "CREATE TABLE %1$s (\n"
+                + "  dataSource_path VARCHAR(1000) NOT NULL,\n"
+                + "  payload %2$s NOT NULL,\n"
+                + "  PRIMARY KEY(dataSource_path)\n"
+                + ")",
+                tableName, getPayloadType()
+            )
+        )
+    );
+  }
+
+  @Override
+  public void createS3SupervisedObjectIntervalsTable()
+  {
+    if (config.get().isCreateTables()) {
+      createS3SupervisedObjectIntervalsTable(tablesConfigSupplier.get().getS3SupervisedObjectIntervalsTable());
+    }
+  }
+
+  public void createS3SupervisedObjectIntervalsTable(final String tableName)
+  {
+    createTable(
+        tableName,
+        ImmutableList.of(
+            StringUtils.format(
+                "CREATE TABLE %1$s (\n"
+                + "  dataSource_path_start_end VARCHAR(1000) NOT NULL,\n"
+                + "  dataSource VARCHAR(255) NOT NULL,\n"
+                + "  path VARCHAR(500) NOT NULL,\n"
+                + "  interval_start VARCHAR(255) NOT NULL,\n"
+                + "  interval_end VARCHAR(255) NOT NULL,\n"
+                + "  hash VARCHAR(500) NOT NULL,\n"
+                + "  PRIMARY KEY (dataSource_path_start_end)\n"
+                + ")",
+                tableName
+            ),
+            StringUtils.format("CREATE INDEX idx_%1$s_datasource ON %1$s(dataSource)", tableName),
+            StringUtils.format("CREATE INDEX idx_%1$s_path ON %1$s(path)", tableName),
+            StringUtils.format("CREATE INDEX idx_%1$s_interval_start ON %1$s(interval_start)", tableName),
+            StringUtils.format("CREATE INDEX idx_%1$s_interval_end ON %1$s(interval_end)", tableName)
+        )
+    );
+  }
 }

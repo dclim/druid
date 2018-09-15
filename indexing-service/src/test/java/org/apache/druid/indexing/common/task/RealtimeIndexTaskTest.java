@@ -982,7 +982,8 @@ public class RealtimeIndexTaskTest
         mdc,
         emitter,
         EasyMock.createMock(SupervisorManager.class),
-        new Counters()
+        new Counters(),
+        null
     );
     final TaskActionClientFactory taskActionClientFactory = new LocalTaskActionClientFactory(
         taskStorage,

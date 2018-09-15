@@ -28,10 +28,13 @@ import org.apache.druid.indexing.common.task.Task;
 import org.apache.druid.indexing.overlord.CriticalAction;
 import org.apache.druid.indexing.overlord.DataSourceMetadata;
 import org.apache.druid.indexing.overlord.SegmentPublishResult;
+import org.apache.druid.indexing.overlord.s3.SupervisedObject;
+import org.apache.druid.indexing.overlord.s3.SupervisedObjectInterval;
 import org.apache.druid.java.util.emitter.service.ServiceMetricEvent;
 import org.apache.druid.query.DruidMetrics;
 import org.apache.druid.timeline.DataSegment;
 
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -106,6 +109,25 @@ public class SegmentTransactionalInsertAction implements TaskAction<SegmentPubli
 
     final SegmentPublishResult retVal;
     try {
+      // TODO: This is a hack in that the metadata we write to the table should come from the S3 metadata we read when we
+      // pulled the file, and not from what the supervisor gave us from when *it* read the file.
+      List<SupervisedObject> supervisedObjects =
+          task.getContext() == null || task.getContext().get(SupervisedObject.SUPERVISED_OBJECTS_CONTEXT_KEY) == null
+          ? null
+          : toolbox.getObjectMapper()
+                   .readValue(
+                       (String) task.getContext().get(SupervisedObject.SUPERVISED_OBJECTS_CONTEXT_KEY),
+                       new TypeReference<List<SupervisedObject>>() {}
+                   );
+      List<SupervisedObjectInterval> supervisedObjectIntervals =
+          task.getContext() == null || task.getContext().get(SupervisedObjectInterval.SUPERVISED_OBJECT_INTERVALS_CONTEXT_KEY) == null
+          ? null
+          : toolbox.getObjectMapper()
+                   .readValue(
+                       (String) task.getContext().get(SupervisedObjectInterval.SUPERVISED_OBJECT_INTERVALS_CONTEXT_KEY),
+                       new TypeReference<List<SupervisedObjectInterval>>() {}
+                   );
+
       retVal = toolbox.getTaskLockbox().doInCriticalSection(
           task,
           segments.stream().map(DataSegment::getInterval).collect(Collectors.toList()),
@@ -114,7 +136,9 @@ public class SegmentTransactionalInsertAction implements TaskAction<SegmentPubli
                   () -> toolbox.getIndexerMetadataStorageCoordinator().announceHistoricalSegments(
                       segments,
                       startMetadata,
-                      endMetadata
+                      endMetadata,
+                      supervisedObjects,
+                      supervisedObjectIntervals
                   )
               )
               .onInvalidLocks(SegmentPublishResult::fail)

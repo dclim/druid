@@ -32,7 +32,7 @@ public class MetadataStorageTablesConfig
 {
   public static MetadataStorageTablesConfig fromBase(String base)
   {
-    return new MetadataStorageTablesConfig(base, null, null, null, null, null, null, null, null, null, null);
+    return new MetadataStorageTablesConfig(base, null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
   public static final String TASK_ENTRY_TYPE = "task";
@@ -76,6 +76,13 @@ public class MetadataStorageTablesConfig
   @JsonProperty("supervisors")
   private final String supervisorTable;
 
+  @JsonProperty("s3SupervisedObjects")
+  private final String s3SupervisedObjectsTable;
+
+  @JsonProperty("s3SupervisedObjectIntervals")
+  private final String s3SupervisedObjectIntervalsTable;
+
+
   @JsonCreator
   public MetadataStorageTablesConfig(
       @JsonProperty("base") String base,
@@ -88,7 +95,10 @@ public class MetadataStorageTablesConfig
       @JsonProperty("taskLog") String taskLogTable,
       @JsonProperty("taskLock") String taskLockTable,
       @JsonProperty("audit") String auditTable,
-      @JsonProperty("supervisors") String supervisorTable
+      @JsonProperty("supervisors") String supervisorTable,
+      @JsonProperty("s3SupervisedObjects") String s3SupervisedObjectsTable,
+      @JsonProperty("s3SupervisedObjectIntervals") String s3SupervisedObjectIntervalsTable
+
   )
   {
     this.base = (base == null) ? DEFAULT_BASE : base;
@@ -106,6 +116,11 @@ public class MetadataStorageTablesConfig
     lockTables.put(TASK_ENTRY_TYPE, this.taskLockTable);
     this.auditTable = makeTableName(auditTable, "audit");
     this.supervisorTable = makeTableName(supervisorTable, "supervisors");
+    this.s3SupervisedObjectsTable = makeTableName(s3SupervisedObjectsTable, "s3SupervisedObjects");
+    this.s3SupervisedObjectIntervalsTable = makeTableName(
+        s3SupervisedObjectIntervalsTable,
+        "s3SupervisedObjectIntervals"
+    );
   }
 
   private String makeTableName(String explicitTableName, String defaultSuffix)
@@ -178,6 +193,16 @@ public class MetadataStorageTablesConfig
   public String getSupervisorTable()
   {
     return supervisorTable;
+  }
+
+  public String getS3SupervisedObjectsTable()
+  {
+    return s3SupervisedObjectsTable;
+  }
+
+  public String getS3SupervisedObjectIntervalsTable()
+  {
+    return s3SupervisedObjectIntervalsTable;
   }
 
   public String getTasksTable()
